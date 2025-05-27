@@ -1,9 +1,42 @@
 #include "common.h"
+#include <sys/wait.h>
+
 
 #define MAX_MESSAGE_SIZE 255
 #define MAX_EVENTS 16
 
 
+void child(char *buf)
+{
+    int fd[2];
+    if (pipe(fd) == -1)
+        ERR("pipe");
+
+    pid_t ret = fork();
+    if (ret == -1)
+        ERR("fork");
+
+    if (ret == 0) // dziecko
+    {
+        close(fd[1]); // zamyka zapis
+        char buff[MAX_MESSAGE_SIZE + 1] = {0};
+        ssize_t read_bytes = read(fd[0], buff, MAX_MESSAGE_SIZE);
+        if (read_bytes > 0)
+        {
+            buff[read_bytes] = 0;
+            printf("Child %d: read: %s\n", getpid(), buff);
+        }
+        close(fd[0]);
+        exit(EXIT_SUCCESS); // dziecko MUSI zakończyć się
+    }
+    else // rodzic
+    {
+        close(fd[0]); // zamyka odczyt
+        write(fd[1], buf, strlen(buf)); // nie trzeba MAX_MESSAGE_SIZE
+        close(fd[1]); // po write trzeba zamknąć!
+        waitpid(ret, NULL, 0); // czekaj tylko na tego konkretnego potomka
+    }
+}
 
 
 void usage(char* program_name)
@@ -48,7 +81,7 @@ int main(int argc, char** argv)
     }
 
    // user_context client_list[MAX_CLIENTS];
-    int current_connections_number = 0;
+   
 
     struct epoll_event event, events[MAX_EVENTS];
     event.events = EPOLLIN;
@@ -62,7 +95,7 @@ int main(int argc, char** argv)
     struct sockaddr_storage addr;
 socklen_t addr_len = sizeof(struct sockaddr_in);
 
-    int m = 0;
+    int current_connections_number = 0;
 
         while (1)
     {
@@ -74,8 +107,8 @@ socklen_t addr_len = sizeof(struct sockaddr_in);
             {
                 // new user
                 int client_socket = add_new_client(events[i].data.fd, (struct sockaddr*)&addr, addr_len);
-                m++;
-                if(m > 3)
+                current_connections_number++;
+                if(current_connections_number > 3)
                 {
                     if (write(client_socket, "Server is full\n", 16) < 0)
                     {
@@ -122,6 +155,7 @@ socklen_t addr_len = sizeof(struct sockaddr_in);
                 read_chars = read(events[i].data.fd, buf, MAX_MESSAGE_SIZE);
                 if (read_chars == 0)
                 {
+                    printf("xdddd\n");
                     if (TEMP_FAILURE_RETRY(close(events[i].data.fd)) < 0)
                         ERR("close");
                 }
@@ -134,13 +168,18 @@ socklen_t addr_len = sizeof(struct sockaddr_in);
                     printf("Client is quting\n");
                           if (TEMP_FAILURE_RETRY(close(events[i].data.fd)) < 0)
                             ERR("close");
+                    current_connections_number--;
                     continue;;
                 }
+
+
                 if (read_chars < 0)
                 {
                     ERR("read");
                 }
-                printf("%s\n", buf);
+
+                child(buf);
+                //printf("%s\n", buf);
             }
         }
     }
